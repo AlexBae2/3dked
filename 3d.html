@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D: инструментальный стеллаж 6000×700×1800</title>
+<style>
+  html,body{margin:0;height:100%;background:#1d2127;overflow:hidden;font:13px/1.4 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#e7e9ee}
+  #ui{position:fixed;top:14px;left:14px;z-index:10;background:rgba(28,32,40,.88);padding:14px 16px;border-radius:10px;max-width:310px;backdrop-filter:blur(6px);max-height:92vh;overflow:auto}
+  h1{font-size:15px;margin:0 0 6px}
+  .d{color:#aab1bf;font-size:12px;margin-bottom:10px}
+  button{display:block;width:100%;margin:4px 0;padding:9px;border:0;border-radius:8px;background:#3d6ae0;color:#fff;font-size:13px;font-weight:600;cursor:pointer}
+  button:hover{background:#5680f0}
+  button.g{background:#3a8f5e}
+  button.k{background:#4a5160}
+  label{display:flex;align-items:center;gap:8px;font-size:12px;margin:5px 0;cursor:pointer}
+  a{color:#8db3ff}
+  .sec{margin-top:9px;font-size:11px;color:#c4cad6;border-top:1px solid #ffffff14;padding-top:8px}
+  .hint{position:fixed;bottom:12px;left:14px;color:#8a91a0;font-size:11px;z-index:10}
+  @media(max-width:640px){#ui{max-width:none;right:14px}}
+</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="ui">
+  <h1>Стеллаж 6000 × 700 × 1800</h1>
+  <div class="d">3 секции по 2000 · 12 колонок × 2 ряда = 24 ячейки 500×900 · каркас уголок 45×45×4 · лист 1,5 мм · двери с замками. <a href="drawing.html">Чертёж →</a></div>
+  <button id="bDoors">Открыть двери</button>
+  <button id="bMod" class="g">Развести секции (сборка)</button>
+  <button id="bView" class="k">Вид спереди</button>
+  <label><input type="checkbox" id="cDoors" checked> Двери</label>
+  <label><input type="checkbox" id="cSheet" checked> Листовые панели</label>
+  <label><input type="checkbox" id="cFrame" checked> Каркас из уголка</label>
+  <label><input type="checkbox" id="cDim" checked> Габаритные линии</label>
+  <div class="sec" id="info"></div>
+</div>
+<div class="hint">ЛКМ вращать · колесо масштаб · ПКМ сдвиг</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { P, uprightAxes, levels, doors, cutList } from './model.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1d2127);
+const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 10, 60000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(P.L/2, 300, 900);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445066, 0.85));
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(2500, -4000, 5000); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -5000, right: 5000, top: 3000, bottom: -3000, near: 100, far: 12000 });
+sun.target.position.set(P.L/2, 350, 0); scene.add(sun, sun.target);
+
+// Z вверх
+camera.up.set(0, 0, 1);
+
+const mFrame = new THREE.MeshStandardMaterial({ color: 0x5d6b7c, metalness: .55, roughness: .45, side: THREE.DoubleSide });
+const mSheet = new THREE.MeshStandardMaterial({ color: 0xb9c1cc, metalness: .35, roughness: .55 });
+const mDoor  = new THREE.MeshStandardMaterial({ color: 0x3f7f8f, metalness: .25, roughness: .5 });
+const mMetal = new THREE.MeshStandardMaterial({ color: 0xd8dde4, metalness: .9, roughness: .25 });
+const mBlack = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: .6 });
+
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(14000, 5000), new THREE.MeshStandardMaterial({ color: 0x2a2f38, roughness: 1 }));
+floor.position.set(P.L/2, 350, -0.5); floor.receiveShadow = true; scene.add(floor);
+
+const gFrame = new THREE.Group(), gSheet = new THREE.Group(), gDoors = new THREE.Group(), gDim = new THREE.Group();
+const modules = [];
+for (let m = 0; m < P.modules; m++) {
+  const g = new THREE.Group(); g.position.x = m * P.modW; g.userData.base = g.position.x;
+  const f = new THREE.Group(), s = new THREE.Group();
+  g.add(f, s); modules.push({ g, f, s }); scene.add(g);
+}
+scene.add(gDoors, gDim);
+
+// L-уголок: сечение в XY, длина вдоль Z, затем центр bbox ставится в (cx, cy, cz)
+const a = P.angle, t = P.angleT;
+function Lgeo(len, sx = 1, sy = 1) {
+  const sh = new THREE.Shape();
+  [[0,0],[a,0],[a,t],[t,t],[t,a],[0,a]].forEach(([x,y],i)=>{ const X=x*sx, Y=y*sy; i?sh.lineTo(X,Y):sh.moveTo(X,Y); });
+  const g = new THREE.ExtrudeGeometry(sh, { depth: len, bevelEnabled: false });
+  return g;
+}
+function angleMesh(parent, axis, len, cx, cy, cz, sx, sy) {
+  const g = Lgeo(len, sx, sy);
+  if (axis === 'x') g.rotateY(Math.PI/2);       // длина вдоль +X
+  if (axis === 'y') g.rotateX(-Math.PI/2);      // длина вдоль +Y
+  g.computeBoundingBox(); const c = new THREE.Vector3(); g.boundingBox.getCenter(c);
+  const mesh = new THREE.Mesh(g, mFrame);
+  mesh.position.set(cx - c.x, cy - c.y, cz - c.z);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  parent.add(mesh); return mesh;
+}
+function box(parent, w, d, h, x, y, z, mat, shadow = true) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, d, h), mat);
+  m.position.set(x, y, z); m.castShadow = shadow; m.receiveShadow = true; parent.add(m); return m;
+}
+
+const axes = uprightAxes();
+const inner = P.modW - 2*a, tie = P.D - 2*a;
+modules.forEach(({ f, s }) => {
+  // стойки
+  axes.forEach((x, k) => {
+    const sxl = (k === axes.length - 1) ? -1 : 1;
+    [[a/2, 1],[P.D - a/2, -1]].forEach(([y, sy]) => angleMesh(f, 'z', P.H, x, y, P.H/2, sxl, sy));
+  });
+  // продольные перекладины и поперечные связи
+  levels.forEach(l => {
+    const zc = l.z0 + a/2;
+    [a/2, P.D - a/2].forEach((y, i) => angleMesh(f, 'x', inner, P.modW/2, y, zc, 1, i ? -1 : 1));
+    axes.forEach((x, k) => angleMesh(f, 'y', tie, x, P.D/2, zc, k === axes.length-1 ? -1 : 1, 1));
+  });
+  // листовые панели: задняя стенка, днища, перегородки
+  const rowCz = [ (a + (P.rowH - a/2))/2 , ((P.rowH + a/2) + (P.H - a))/2 ];
+  const clearZ = (P.rowH - a/2) - a;
+  rowCz.forEach(z => box(s, inner, P.sheetT, clearZ, P.modW/2, P.D - a - P.sheetT/2 + 0.8, z, mSheet));
+  levels.forEach(l => {
+    for (let c = 0; c < P.cellsPerModule; c++) {
+      const cx = c * P.pitch + P.pitch/2;
+      box(s, P.pitch - a, tie, P.sheetT, cx, P.D/2, l.z0 + a + P.sheetT/2, mSheet);
+    }
+  });
+  axes.forEach(x => rowCz.forEach(z => box(s, P.sheetT, tie, clearZ, x, P.D/2, z, mSheet)));
+});
+
+// Двери
+const doorList = doors(), doorPivots = [];
+doorList.forEach(d => {
+  const pivot = new THREE.Group();
+  const px = d.hingeLeft ? d.x0 : d.x1;
+  pivot.position.set(px, -0.5, 0);
+  const w = P.doorW, h = P.doorH, ct = P.sheetT;
+  const dir = d.hingeLeft ? 1 : -1;
+  const dg = new THREE.Group(); dg.position.set(dir * w/2, -ct/2, (d.z0 + d.z1)/2);
+  pivot.add(dg);
+  box(dg, w, ct, h, 0, 0, 0, mDoor);
+  // отгибы 20 мм
+  const r = P.doorReturn;
+  box(dg, w, r, ct, 0, r/2, h/2 - ct/2, mDoor); box(dg, w, r, ct, 0, r/2, -h/2 + ct/2, mDoor);
+  box(dg, ct, r, h, -w/2 + ct/2, r/2, 0, mDoor); box(dg, ct, r, h, w/2 - ct/2, r/2, 0, mDoor);
+  // скоба и замок на сходящейся кромке
+  const ex = -dir * (w/2 - 38);
+  box(dg, 10, 14, 150, ex, -ct/2 - 7, 0, mMetal);
+  const key = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 6, 20), mBlack);
+  key.rotation.x = Math.PI/2; key.position.set(ex, -ct/2 - 3, h/2 - 110); dg.add(key);
+  // петли
+  [0.14, 0.5, 0.86].forEach(q => box(dg, 14, 8, 60, -dir * (w/2 - 7), -ct/2 - 4, (q - .5) * h, mMetal));
+  pivot.userData = { dir, open: 0, target: 0, hingeLeft: d.hingeLeft };
+  gDoors.add(pivot); doorPivots.push(pivot);
+});
+
+// Габаритные линии
+function line(p, q, col = 0xffc857) {
+  const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...p), new THREE.Vector3(...q)]);
+  gDim.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: col })));
+}
+line([0,-120,-0],[P.L,-120,0]); line([0,-120,P.H+80],[P.L,-120,P.H+80]);
+line([P.L+120,0,0],[P.L+120,P.D,0]); line([-120,-80,0],[-120,-80,P.H]);
+function label(txt, x, y, z) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 128;
+  const g = c.getContext('2d'); g.fillStyle = '#ffc857'; g.font = 'bold 72px sans-serif'; g.textAlign = 'center'; g.fillText(txt, 256, 90);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
+  sp.scale.set(800, 200, 1); sp.position.set(x, y, z); gDim.add(sp);
+}
+label('6000', P.L/2, -120, P.H + 200); label('1800', -330, -80, P.H/2); label('700', P.L + 330, P.D/2, 120);
+
+// UI
+const c = cutList();
+document.getElementById('info').innerHTML =
+  `<b>Масса (расчётная):</b> ≈ ${c.totalKg.toFixed(0)} кг без фурнитуры<br>уголок ${c.angleM.toFixed(1)} м → ${c.angleKg.toFixed(0)} кг<br>лист ${c.sheetArea.toFixed(1)} м² → ${c.sheetKg.toFixed(0)} кг`;
+let opened = false, spread = false, targetSpread = 0, spreadNow = 0;
+bDoors.onclick = () => { opened = !opened; doorPivots.forEach(p => p.userData.target = opened ? 1 : 0); bDoors.textContent = opened ? 'Закрыть двери' : 'Открыть двери'; };
+bMod.onclick = () => { spread = !spread; targetSpread = spread ? 1 : 0; bMod.textContent = spread ? 'Собрать секции' : 'Развести секции (сборка)'; };
+function setView(front) {
+  if (front) { camera.position.set(P.L/2 + 900, -12500, 900); controls.target.set(P.L/2, 350, 900); }
+  else { camera.position.set(-500, -10500, 4800); controls.target.set(P.L/2 + 600, 300, 800); }
+}
+let front = false; bView.onclick = () => { front = !front; setView(front); bView.textContent = front ? 'Вид сбоку 3/4' : 'Вид спереди'; };
+setView(false);
+cDoors.onchange = () => gDoors.visible = cDoors.checked;
+cSheet.onchange = () => modules.forEach(m => m.s.visible = cSheet.checked);
+cFrame.onchange = () => modules.forEach(m => m.f.visible = cFrame.checked);
+cDim.onchange = () => gDim.visible = cDim.checked;
+
+function tick() {
+  requestAnimationFrame(tick);
+  doorPivots.forEach(p => {
+    const u = p.userData; u.open += (u.target - u.open) * 0.12;
+    p.rotation.z = (u.hingeLeft ? -1 : 1) * u.open * (110 * Math.PI/180);
+  });
+  spreadNow += (targetSpread - spreadNow) * 0.1;
+  modules.forEach((m, i) => { m.g.position.x = m.g.userData.base + (i - 1) * 450 * spreadNow; });
+  gDoors.children.forEach((p, i) => { p.position.x = (p.userData.hingeLeft ? doorList[i].x0 : doorList[i].x1) + (doorList[i].module - 1) * 450 * spreadNow; });
+  controls.update(); renderer.render(scene, camera);
+}
+tick();
+addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+window.__ready = true;
+</script>
+</body>
+</html>

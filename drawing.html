@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Чертёж: инструментальный стеллаж 6000×700×1800</title>
+<style>
+  :root{color-scheme:light}
+  *{box-sizing:border-box}
+  body{margin:0;background:#cfd3d9;font-family:"Arial Narrow",Arial,Helvetica,sans-serif;color:#111}
+  .bar{position:sticky;top:0;z-index:5;background:#1d2127;color:#fff;padding:8px 14px;display:flex;gap:14px;align-items:center;font:13px Arial,sans-serif}
+  .bar a,.bar button{color:#fff;background:#3d6ae0;border:0;border-radius:6px;padding:6px 12px;text-decoration:none;cursor:pointer;font:600 13px Arial,sans-serif}
+  .sheet{width:420mm;height:297mm;background:#fff;margin:14px auto;position:relative;box-shadow:0 2px 14px #0005;overflow:hidden}
+  .sheet svg{position:absolute;inset:0;width:420mm;height:297mm}
+  .sheet.doc{padding:0}
+  .frame{position:absolute;left:20mm;top:5mm;right:5mm;bottom:5mm;border:0.5mm solid #000}
+  .inner{position:absolute;left:24mm;top:9mm;right:9mm;bottom:63mm;font-size:3.4mm;line-height:1.3}
+  h2{font-size:5mm;margin:0 0 2mm}
+  h3{font-size:3.8mm;margin:4mm 0 1.2mm}
+  table{border-collapse:collapse;width:100%;font-size:3.1mm}
+  th,td{border:0.2mm solid #000;padding:0.7mm 1.6mm;text-align:left;vertical-align:top}
+  th{background:#eee}
+  td.n,th.n{text-align:right;white-space:nowrap}
+  .cols{display:grid;grid-template-columns:1.25fr 1fr;gap:6mm}
+  ol{margin:0;padding-left:5mm} ol li{margin:0 0 0.9mm}
+  .warn{border:0.3mm dashed #b00;padding:2mm 3mm;margin-top:3mm;background:#fff8f8}
+  @page{size:A3 landscape;margin:0}
+  @media print{body{background:#fff}.bar{display:none}.sheet{margin:0;box-shadow:none;page-break-after:always;break-after:page}}
+</style>
+</head>
+<body>
+<div class="bar"><b>Чертёж · стеллаж 6000×700×1800</b><span id="status"></span><a href="3d.html">3D-модель</a><button onclick="print()">Печать / PDF (A3)</button></div>
+<div id="sheets"></div>
+<script type="module">
+import { P, uprightAxes, levels, doors, cutList } from './model.js';
+const NS = 'http://www.w3.org/2000/svg';
+const a = P.angle, t = P.angleT;
+const f1 = n => (Math.round(n * 10) / 10).toString().replace('.', ',');
+
+// ---------- SVG helpers (координаты листа в мм) ----------
+class S {
+  constructor() { this.o = []; }
+  add(s) { this.o.push(s); return this; }
+  line(x1,y1,x2,y2,w=.25,extra='') { return this.add(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#000" stroke-width="${w}" ${extra}/>`); }
+  dash(x1,y1,x2,y2,w=.2) { return this.line(x1,y1,x2,y2,w,'stroke-dasharray="3 1.2"'); }
+  chain(x1,y1,x2,y2,w=.2) { return this.line(x1,y1,x2,y2,w,'stroke-dasharray="7 1.2 1.2 1.2"'); }
+  rect(x,y,w,h,{sw=.35,fill='none',extra=''}={}) { return this.add(`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="#000" stroke-width="${sw}" ${extra}/>`); }
+  poly(pts,{sw=.35,fill='none'}={}) { return this.add(`<polygon points="${pts.map(p=>p.join(',')).join(' ')}" fill="${fill}" stroke="#000" stroke-width="${sw}"/>`); }
+  circ(x,y,r,{sw=.3,fill='none'}={}) { return this.add(`<circle cx="${x}" cy="${y}" r="${r}" fill="${fill}" stroke="#000" stroke-width="${sw}"/>`); }
+  text(x,y,s,{size=3.5,anchor='middle',rot=0,bold=false}={}) {
+    return this.add(`<text x="${x}" y="${y}" font-size="${size}" text-anchor="${anchor}" ${bold?'font-weight="700"':''} font-family="Arial Narrow,Arial,sans-serif" ${rot?`transform="rotate(${rot} ${x} ${y})"`:''}>${s}</text>`);
+  }
+  tick(x,y){ return this.line(x-1,y+1,x+1,y-1,.4); }
+  // горизонтальный размер: линия на y, выносные от ey1/ey2
+  dimH(x1,x2,y,txt,e1,e2){ this.line(x1,e1??y,x1,y-1.5,.15); this.line(x2,e2??e1??y,x2,y-1.5,.15); this.line(x1-1.5,y,x2+1.5,y,.2); this.tick(x1,y); this.tick(x2,y); return this.text((x1+x2)/2,y-1,txt,{size:3}); }
+  dimV(y1,y2,x,txt,e1,e2){ this.line(e1??x,y1,x-1.5,y1,.15); this.line(e2??e1??x,y2,x-1.5,y2,.15); this.line(x,y1-1.5,x,y2+1.5,.2); this.tick(x,y1); this.tick(x,y2); return this.text(x-1,(y1+y2)/2,txt,{size:3,rot:-90}); }
+  leader(x1,y1,x2,y2,txt,anchor='start'){ this.line(x1,y1,x2,y2,.2); this.circ(x1,y1,.5,{fill:'#000'}); return this.text(x2+(anchor==='start'?1:-1),y2+1,txt,{size:3,anchor}); }
+  html() { return this.o.join(''); }
+}
+function titleBlock(s, {title, sheetNo, scale, sub}) {
+  const x = 230, y = 242, w = 185, h = 50;
+  s.rect(x, y, w, h, {sw:.5});
+  s.line(x, y+14, x+w, y+14, .3); s.line(x, y+26, x+w, y+26, .25); s.line(x, y+38, x+w, y+38, .25);
+  s.line(x+112, y+14, x+112, y+h, .25); s.line(x+140, y+14, x+140, y+h, .25); s.line(x+160, y+14, x+160, y+h, .25);
+  s.text(x+w/2, y+9, title, {size:6, bold:true});
+  s.text(x+3, y+22, 'Инструментальный стеллаж с ящиками (ячейки с замками)', {size:3.6, anchor:'start'});
+  s.text(x+3, y+34, sub, {size:3.2, anchor:'start'});
+  s.text(x+3, y+46, 'Материал: уголок 45×45×4 ГОСТ 8509-93, лист 1,5 мм, Ст3', {size:3.2, anchor:'start'});
+  s.text(x+126, y+20, 'Масштаб', {size:2.6}); s.text(x+126, y+32, scale, {size:4, bold:true});
+  s.text(x+150, y+20, 'Лист', {size:2.6}); s.text(x+150, y+32, sheetNo, {size:4, bold:true});
+  s.text(x+172, y+20, 'Листов', {size:2.6}); s.text(x+172, y+32, '3', {size:4, bold:true});
+  s.text(x+126, y+44, 'Масса ≈ ' + Math.round(cutList().totalKg) + ' кг', {size:3.2});
+  s.text(x+150, y+44, 'Размеры в мм', {size:2.6}); s.text(x+172, y+44, 'Ред. 1', {size:2.6});
+}
+const sheetSvg = (inner) => `<svg viewBox="0 0 420 297" xmlns="${NS}">
+<defs><pattern id="hatch" width="2" height="2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="2" stroke="#000" stroke-width=".18"/></pattern></defs>
+<rect x="20" y="5" width="395" height="287" fill="none" stroke="#000" stroke-width=".5"/>${inner}</svg>`;
+
+const D = doors();
+const cl = cutList();
+const sheets = document.getElementById('sheets');
+
+// ===================== ЛИСТ 1: общий вид =====================
+(() => {
+  const s = new S(), sc = 25;
+  const fx = 42, fy = 52;
+  const X = v => fx + v / sc, Zt = v => fy + (P.H - v) / sc;
+  s.text(fx, 13, 'Вид спереди (двери закрыты) 1:25', {size:4.5, anchor:'start', bold:true});
+  s.rect(X(0), Zt(P.H), P.L/sc, P.H/sc, {sw:.5});
+  D.forEach(d => {
+    s.rect(X(d.x0), Zt(d.z1), P.doorW/sc, P.doorH/sc, {sw:.3});
+    const ex = d.hingeLeft ? d.x1 : d.x0, hx = d.hingeLeft ? d.x0 : d.x1;
+    const hxp = X(ex + (d.hingeLeft ? -38 : 38)), zc = (d.z0 + d.z1) / 2;
+    s.line(hxp, Zt(zc + 75), hxp, Zt(zc - 75), .6);
+    s.circ(hxp, Zt(d.z1 - 110), .5, {sw:.25});
+    [.14,.5,.86].forEach(q => s.rect(X(hx) + (d.hingeLeft ? 0 : -.6), Zt(d.z0 + q * P.doorH + 30), .6, 60/sc, {sw:.15, fill:'#000'}));
+  });
+  [2000, 4000].forEach(x => s.chain(X(x), Zt(P.H) - 6, X(x), Zt(0) + 6, .2));
+  [1000, 3000, 5000].forEach((x, i) => s.text(X(x), Zt(0) + 5, 'секция ' + (i + 1), {size:3}));
+  for (let c = 0; c < 12; c++) { const cx = X(c * 500 + 250); s.circ(cx, Zt(0) + 12, 2.2, {sw:.2}); s.text(cx, Zt(0) + 13.2, c + 1, {size:3}); }
+  for (let c = 0; c < 12; c++) s.dimH(X(c*500), X((c+1)*500), Zt(P.H) - 15, '500', Zt(P.H));
+  [0, 2000, 4000].forEach(x => s.dimH(X(x), X(x + 2000), Zt(P.H) - 24, '2000 (секция)', Zt(P.H)));
+  s.dimH(X(0), X(P.L), Zt(P.H) - 33, '6000', Zt(P.H));
+  s.dimV(Zt(900), Zt(0), X(0) - 8, '900', X(0)); s.dimV(Zt(1800), Zt(900), X(0) - 8, '900', X(0)); s.dimV(Zt(1800), Zt(0), X(0) - 16, '1800', X(0));
+  s.dimV(Zt(897 + 1.5), Zt(1.5), X(6000) + 8, '897 (дверь)', X(6000));
+
+  // вид сбоку 1:25
+  const sx = 330, sy = fy;
+  s.text(sx, 13, 'Вид сбоку 1:25', {size:4.5, anchor:'start', bold:true});
+  s.rect(sx, sy, P.D/sc, P.H/sc, {sw:.5});
+  s.line(sx, sy + P.H/sc / 2, sx + P.D/sc, sy + P.H/sc / 2, .25);
+  s.text(sx + 14, sy + 18, 'ряд В', {size:3}); s.text(sx + 14, sy + 54, 'ряд Н', {size:3});
+  s.dimV(sy, sy + P.H/sc, sx - 6, '1800', sx); s.dimH(sx, sx + P.D/sc, sy + P.H/sc + 8, '700', sy + P.H/sc);
+
+  // ---- план, сечение Б-Б на высоте 450, фрагмент пары ячеек 1:10 ----
+  const psc = 10, qx = 42, py = 205;
+  const PX = v => qx + v / psc, PY = v => py + v / psc;     // y: 0 = фасад
+  s.text(qx, 147, 'План, сечение Б–Б на высоте 450 мм, фрагмент: ячейки 1 и 2 (1:10)', {size:4.5, anchor:'start', bold:true});
+  const axes = uprightAxes();
+  const Lp = (x, y, sx, sy) => [[0,0],[a,0],[a,t],[t,t],[t,a],[0,a]].map(([u,v]) => [PX(x + sx*u), PY(y + sy*v)]);
+  [axes[0], axes[1], 1000].forEach((ax, k) => {
+    s.poly(Lp(k === 0 ? 0 : ax - a/2, 0, 1, 1), {sw:.25, fill:'#555'});
+    s.poly(Lp(k === 0 ? 0 : ax - a/2, P.D, 1, -1), {sw:.25, fill:'#555'});
+    s.line(PX(ax), PY(a), PX(ax), PY(P.D - a), .35);                       // перегородка 1,5
+  });
+  s.line(PX(0), PY(P.D - a - P.sheetT/2), PX(1100), PY(P.D - a - P.sheetT/2), .35);   // задняя стенка
+  // двери: 1-я открыта на 90° (петля слева), 2-я закрыта; штрих — положение закрытой 1-й
+  const d1 = D[0], d2 = D[2];
+  s.line(PX(d1.x0), PY(-1.5), PX(d1.x0), PY(-1.5 - P.doorW), .6);
+  s.dash(PX(d1.x0), PY(-1.5), PX(d1.x1), PY(-1.5), .2);
+  s.line(PX(d2.x0), PY(-1.5), PX(d2.x1), PY(-1.5), .6);
+  s.add(`<path d="M ${PX(d1.x1)} ${PY(-1.5)} A ${P.doorW/psc} ${P.doorW/psc} 0 0 0 ${PX(d1.x0)} ${PY(-1.5 - P.doorW)}" fill="none" stroke="#000" stroke-width=".2" stroke-dasharray="2 1"/>`);
+  s.text(PX(300), PY(-300), 'дверь 1 открыта на 90° (макс. 110°)', {size:2.8, anchor:'start'});
+  s.text(PX(560), PY(-1.5) - 3, 'дверь 2 закрыта', {size:2.8, anchor:'start'});
+  s.chain(PX(1100), PY(-5), PX(1100), PY(P.D + 5), .2);
+  s.text(PX(1100) + 2, PY(P.D/2), 'далее по длине', {size:2.8, anchor:'start'});
+  // размеры
+  s.dimV(PY(0), PY(P.D), PX(0) - 6, '700', PX(0));
+  s.dimH(PX(0), PX(a), PY(P.D) + 7, '45', PY(P.D));
+  s.dimH(PX(a), PX(500 - a/2), PY(P.D) + 7, '432,5 (свет)', PY(P.D));
+  s.dimH(PX(500 + a/2), PX(1000 - a/2), PY(P.D) + 7, '455 (свет)', PY(P.D));
+  s.dimH(PX(0), PX(500), PY(P.D) + 14, '500', PY(P.D)); s.dimH(PX(500), PX(1000), PY(P.D) + 14, '500', PY(P.D));
+  s.dimH(PX(d1.x0), PX(d1.x1), PY(-1.5) - 12, '497 (дверь)', PY(-1.5));
+  s.leader(PX(a/2), PY(a/2), PX(60), PY(-20) - 0, '', 'start');
+  s.text(PX(62), PY(-20), 'стойка L45×45×4', {size:2.8, anchor:'start'});
+  s.leader(PX(300), PY(P.D - a - P.sheetT/2), PX(300), PY(P.D) + 5, '', 'start');
+  s.text(PX(303), PY(P.D) + 4, '', {size:2.8, anchor:'start'});
+
+  // ---- условные обозначения и примечания ----
+  const lx = 252, ly = 150;
+  s.rect(lx - 4, ly - 7, 163, 88, {sw:.3});
+  s.text(lx, ly - 1, 'Условные обозначения', {size:3.6, anchor:'start', bold:true});
+  s.line(lx, ly + 5, lx + 6, ly + 5, .6); s.text(lx + 9, ly + 6.2, 'ручка-скоба, на сходящейся кромке пары дверей', {size:2.9, anchor:'start'});
+  s.circ(lx + 3, ly + 10, .5); s.text(lx + 9, ly + 11, 'замок с ключом, 1 шт. на дверь', {size:2.9, anchor:'start'});
+  s.rect(lx + 2.4, ly + 13.5, .6, 3, {fill:'#000', sw:.1}); s.text(lx + 9, ly + 16, 'петля усиленная 80 мм, 3 шт. на дверь (двери парами, петли по краям пары)', {size:2.9, anchor:'start'});
+  s.text(lx, ly + 25, 'Исходное задание заказчика', {size:3.6, anchor:'start', bold:true});
+  ['Инструментальный стеллаж с ящиками. Длина 6 м, высота 1,8 м, глубина 0,7 м.', 'Ячейки снизу и сверху: высота 0,9 м, ширина 0,5 м. Материал: уголок 45,', 'листовой металл. Двери закрывающиеся (на замок).']
+    .forEach((x, i) => s.text(lx, ly + 30 + i * 3.8, x, {size:2.9, anchor:'start'}));
+  s.text(lx, ly + 46, 'Принято при разработке (подтвердить, см. лист 3)', {size:3.6, anchor:'start', bold:true});
+  ['• уголок 45×45×4, лист 1,5 мм, сталь Ст3', '• 3 болтовых секции по 2000 мм (перевозка, монтаж)', '• 12 колонок по 500 × 2 ряда по 900 = 24 ячейки', '• 1 замок на дверь, полок внутри ячеек нет', '• выдвижных ящиков в задании нет: уточнить']
+    .forEach((x, i) => s.text(lx, ly + 51 + i * 3.8, x, {size:2.9, anchor:'start'}));
+  s.text(lx, ly + 74, 'Свет проёма справочный: крайние ячейки 432,5, средние 455 мм.', {size:2.9, anchor:'start'});
+
+  titleBlock(s, { title: 'Общий вид', sheetNo: '1', scale: '1:25 / 1:10', sub: 'Габариты 6000 × 700 × 1800 мм · 3 секции по 2000 · 24 ячейки 500×900' });
+  const el = document.createElement('div'); el.className = 'sheet'; el.innerHTML = sheetSvg(s.html()); sheets.appendChild(el);
+})();
+
+// ===================== ЛИСТ 2: секция и узлы =====================
+(() => {
+  const s = new S(), sc = 15;
+  const fx = 40, fy = 45;
+  const X = v => fx + v / sc, Zt = v => fy + (P.H - v) / sc;
+  s.text(fx, 25, 'Секция 2000×700×1800 · вид спереди, без дверей (1:15)', {size:4.5, anchor:'start', bold:true});
+  const axes = uprightAxes(), inner = P.modW - 2*a;
+  // задняя стенка (штриховка) по рядам
+  const zr = [[a, P.rowH - a/2], [P.rowH + a/2, P.H - a]];
+  zr.forEach(([z0, z1]) => s.rect(X(a), Zt(z1), (P.modW - 2*a)/sc, (z1 - z0)/sc, {sw:.15, fill:'url(#hatch)'}));
+  // горизонтальные пояса
+  levels.forEach(l => s.rect(X(a), Zt(l.z0 + a), inner/sc, a/sc, {sw:.35, fill:'#fff'}));
+  // стойки
+  axes.forEach(x => s.rect(X(x - a/2), Zt(P.H), a/sc, P.H/sc, {sw:.4, fill:'#fff'}));
+  s.rect(X(0), Zt(P.H), P.modW/sc, P.H/sc, {sw:.2, extra:'stroke-dasharray="1 1"'});
+  // размеры
+  s.dimH(X(0), X(P.modW), Zt(P.H) - 10, '2000', Zt(P.H));
+  axes.slice(0,-1).forEach((x,i) => s.dimH(X(x), X(axes[i+1]), Zt(P.H) - 3, f1(axes[i+1] - x), Zt(P.H)));
+  s.dimV(Zt(P.H), Zt(0), X(0) - 8, '1800', X(0));
+  s.dimV(Zt(P.H), Zt(900), X(0) - 16, '900', X(0)); s.dimV(Zt(900), Zt(0), X(0) - 16, '900', X(0));
+  s.dimV(Zt(P.H - a), Zt(P.H), X(P.modW) + 8, '45', X(P.modW));
+  s.dimV(Zt(P.rowH - a/2), Zt(P.rowH + a/2), X(P.modW) + 8, '45', X(P.modW)); 
+  s.text(X(P.modW) + 14, Zt(1350), 'свет ряда по высоте 832,5', {size:2.8, rot:-90});
+  s.text(X(P.modW) + 14, Zt(450), 'свет ряда по высоте 832,5', {size:2.8, rot:-90});
+  // выноски позиций
+  s.leader(X(500), Zt(1000), X(520), Zt(1075), '1', 'start'); 
+  s.leader(X(1000), Zt(P.H - a/2), X(1000), Zt(P.H) - 20, '', 'start');
+  s.text(X(1000) + 3, Zt(P.H) - 19, '2', {size:3.2, anchor:'start'});
+  s.leader(X(1250), Zt(450), X(1290), Zt(500), '6', 'start');
+  s.leader(X(500) + 22, Zt(a + 5), X(500) + 40, Zt(150), '7', 'start');
+  s.text(X(0), Zt(0) + 8, 'Поз.: 1 стойка L45×45×4 L=1800 · 2 перекладина L=1910 · 6 задняя стенка лист 1,5 · 7 днище-перекрытие', {size:2.8, anchor:'start'});
+
+  // --- разрез сбоку 1:10 ---
+  const sx = 200, sy = 45, SX = v => sx + v / sc, SZ = v => sy + (P.H - v) / sc;
+  s.text(sx - 5, 25, 'Разрез А–А (сбоку) 1:15', {size:4.5, anchor:'start', bold:true});
+  [a/2, P.D - a/2].forEach((y, i) => {
+    const x0 = i ? P.D - a : 0;
+    s.rect(SX(x0), SZ(P.H), a/sc, P.H/sc, {sw:.35, fill:'#fff'});
+  });
+  levels.forEach(l => s.rect(SX(a), SZ(l.z0 + a), (P.D - 2*a)/sc, a/sc, {sw:.35, fill:'#fff'}));
+  levels.forEach(l => s.rect(SX(a), SZ(l.z0 + a + P.sheetT), (P.D - 2*a)/sc, P.sheetT/sc, {sw:.2, fill:'#000'}));
+  s.rect(SX(P.D - a - P.sheetT), SZ(P.H - a), P.sheetT/sc, (P.H - 2*a)/sc, {sw:.2, fill:'#000'});
+  s.dimH(SX(0), SX(P.D), SZ(P.H) - 10, '700', SZ(P.H)); s.dimH(SX(0), SX(a), SZ(0) + 8, '45', SZ(0)); s.dimH(SX(P.D - a), SX(P.D), SZ(0) + 8, '45', SZ(0));
+  s.text(SX(P.D/2), SZ(900) - 4, 'перекрытие между рядами', {size:2.6});
+  s.text(SX(P.D/2), SZ(P.H) + 5, 'крышка', {size:2.6}); s.text(SX(P.D/2), SZ(0) - 3, 'днище', {size:2.6});
+  s.text(SX(-1), SZ(900), 'фасад', {size:2.8, rot:-90, anchor:'middle'});
+  s.leader(SX(P.D - a - 1), SZ(1300), SX(P.D) + 6, SZ(1300), '6', 'start');
+
+  // --- характеристики секции ---
+  const kx = 270, ky = 40;
+  s.text(kx, ky, 'Характеристики секции', {size:4, anchor:'start', bold:true});
+  [['Габариты секции', '2000 × 700 × 1800 мм'], ['Секций в стеллаже', '3 шт. (маркировка 1–3 слева направо)'], ['Ячеек в секции', '4 колонки × 2 ряда = 8 шт.'], ['Ячейка', 'шаг 500 × 900 мм, глубина 700'], ['Стоек', '10 шт. L45×45×4, L=1800'], ['Перекладин вдоль', '6 шт. L45×45×4, L=1910'], ['Связей по глубине', '15 шт. L45×45×4, L=610'], ['Дверей', '8 шт. 497 × 897, лист 1,5'], ['Масса секции', '≈ ' + Math.round(cutList().totalKg / P.modules) + ' кг (без фурнитуры)']]
+    .forEach(([k, v], i) => { s.text(kx, ky + 7 + i * 5.2, k, {size:3, anchor:'start'}); s.text(kx + 44, ky + 7 + i * 5.2, v, {size:3, anchor:'start', bold:true}); s.line(kx, ky + 8.5 + i * 5.2, kx + 140, ky + 8.5 + i * 5.2, .1); });
+
+  // --- Узел А: угол каркаса, план 1:2 ---
+  const nsc = 2, ny = 205;
+  const Lp = (px, py, sx, sy) => [[0,0],[a,0],[a,t],[t,t],[t,a],[0,a]].map(([u,v]) => [px + sx * u / nsc, py + sy * v / nsc]);
+  s.text(30, 185, 'Узел А: угол каркаса, план 1:2', {size:4, anchor:'start', bold:true});
+  s.poly(Lp(50, ny, 1, 1), {sw:.35, fill:'#ddd'});
+  s.rect(50 + t / nsc, ny + t / nsc, P.sheetT / nsc, 36 / nsc, {sw:.2, fill:'#000'});
+  s.dimH(50, 50 + a / nsc, ny - 4, '45', ny); s.dimV(ny, ny + a / nsc, 46, '45', 50);
+  s.text(50 + a / nsc + 4, ny + 6, 'уголок 45×45×4', {size:3, anchor:'start'});
+  s.text(50 + a / nsc + 4, ny + 12, 'перегородка 1,5 мм: прихватки 20 мм', {size:3, anchor:'start'});
+  s.text(50 + a / nsc + 4, ny + 16, 'через 150 мм к стойке и поясам', {size:3, anchor:'start'});
+  s.text(30, ny + 32, 'Сварка полуавтоматом в среде защитного газа (ГОСТ 14771),', {size:2.9, anchor:'start'});
+  s.text(30, ny + 36, 'катет 3 мм, шов прерывистый 30/100, на стыках стойки и пояса.', {size:2.9, anchor:'start'});
+
+  // --- Узел Б: стык секций 1:2 ---
+  const bx = 150;
+  s.text(bx - 8, 185, 'Узел Б: стык секций, план 1:2', {size:4, anchor:'start', bold:true});
+  s.poly(Lp(bx + 20, ny, -1, 1), {sw:.35, fill:'#ddd'}); s.poly(Lp(bx + 20, ny, 1, 1), {sw:.35, fill:'#ddd'});
+  s.chain(bx + 20, ny - 6, bx + 20, ny + a / nsc + 6, .2);
+  s.rect(bx + 20 - 0.9, ny + a / nsc - 5, 1.8, 6, {sw:.25, fill:'#fff'});
+  s.dimH(bx + 20 - a / nsc, bx + 20 + a / nsc, ny - 4, '90', ny);
+  s.text(bx + 20 + a / nsc + 4, ny + 6, 'болт М8×30 + гайка + шайба', {size:3, anchor:'start'});
+  s.text(bx - 8, ny + 25, 'Две крайние стойки соседних секций стягиваются 4 болтами', {size:2.9, anchor:'start'});
+  s.text(bx - 8, ny + 29, 'по высоте (z = 100, 700, 1100, 1700). Отверстия Ø9 в полках', {size:2.9, anchor:'start'});
+  s.text(bx - 8, ny + 33, 'сверлить по месту при контрольной сборке на стенде.', {size:2.9, anchor:'start'});
+
+  // --- Узел В: дверь 1:2 ---
+  const vx = 290;
+  s.text(vx - 8, 185, 'Узел В: дверь, сечение 1:2', {size:4, anchor:'start', bold:true});
+  const r = P.doorReturn, ct = P.sheetT, dw = 160;
+  s.rect(vx, ny, dw / nsc, ct / nsc, {sw:.2, fill:'#000'});
+  s.rect(vx, ny, ct / nsc, r / nsc, {sw:.2, fill:'#000'}); s.rect(vx + dw / nsc - ct / nsc, ny, ct / nsc, r / nsc, {sw:.2, fill:'#000'});
+  s.dimV(ny, ny + r / nsc, vx - 4, '20', vx);
+  s.text(vx + dw / 2 / nsc, ny - 3, 'лист 1,5 мм, отгиб 20 по 4 сторонам', {size:3});
+  s.text(vx - 8, ny + 25, 'Зазор между дверями 3 мм, до стойки и до пола по 1,5 мм.', {size:2.9, anchor:'start'});
+  s.text(vx - 8, ny + 29, 'Петли накладные 80 мм, 3 шт., замок и скоба на кромке', {size:2.9, anchor:'start'});
+  s.text(vx - 8, ny + 33, 'сходящейся пары. Угол открывания до 110°.', {size:2.9, anchor:'start'});
+
+  titleBlock(s, { title: 'Секция и узлы', sheetNo: '2', scale: '1:15 / 1:2', sub: 'Секция 2000 × 700 × 1800 (3 шт.) · ряды 900 · стойки по оси 500' });
+  const el = document.createElement('div'); el.className = 'sheet'; el.innerHTML = sheetSvg(s.html()); sheets.appendChild(el);
+})();
+
+// ===================== ЛИСТ 3: спецификация =====================
+(() => {
+  const rows = (arr, cols) => arr.map(x => `<tr>${cols.map(c => `<td class="${c === 'qty' ? 'n' : ''}">${x[c] ?? ''}</td>`).join('')}</tr>`).join('');
+  const sh = cl.sheets.map(x => ({ ...x, areaTot: (x.area * x.qty).toFixed(2), kg: (x.area * x.qty * P.sheetKgM2).toFixed(1) }));
+  const an = cl.angles.map(x => ({ ...x, m: (x.len * x.qty / 1000).toFixed(1), kg: (x.len * x.qty / 1000 * P.angleKgM).toFixed(1) }));
+  const html = `
+  <div class="frame"></div>
+  <div class="inner">
+    <h2>Спецификация, технические требования, вопросы к заказчику</h2>
+    <div class="cols">
+      <div>
+        <h3>1. Уголок стальной горячекатаный 45×45×4, ГОСТ 8509-93 (2,73 кг/м)</h3>
+        <table><tr><th>Поз.</th><th>Наименование</th><th>Размер</th><th class="n">Кол.</th><th class="n">Длина, м</th><th class="n">Масса, кг</th></tr>
+        ${an.map(x => `<tr><td>${x.pos}</td><td>${x.name}<br><small>${x.note}</small></td><td>${x.size}</td><td class="n">${x.qty}</td><td class="n">${x.m}</td><td class="n">${x.kg}</td></tr>`).join('')}
+        <tr><th colspan="4">Итого уголок</th><th class="n">${cl.angleM.toFixed(1)}</th><th class="n">${cl.angleKg.toFixed(0)}</th></tr></table>
+        <h3>2. Лист стальной, толщина ${P.sheetT} мм (${f1(P.sheetKgM2)} кг/м²)</h3>
+        <table><tr><th>Поз.</th><th>Наименование</th><th>Размер, мм</th><th class="n">Кол.</th><th class="n">Площадь, м²</th><th class="n">Масса, кг</th></tr>
+        ${sh.map(x => `<tr><td>${x.pos}</td><td>${x.name}<br><small>${x.note}</small></td><td>${x.size}</td><td class="n">${x.qty}</td><td class="n">${x.areaTot}</td><td class="n">${x.kg}</td></tr>`).join('')}
+        <tr><th colspan="4">Итого лист (чистые размеры, без отходов раскроя)</th><th class="n">${cl.sheetArea.toFixed(1)}</th><th class="n">${cl.sheetKg.toFixed(0)}</th></tr></table>
+        <h3>3. Фурнитура и крепёж</h3>
+        <table><tr><th>Поз.</th><th>Наименование</th><th class="n">Кол.</th></tr>
+        ${cl.hw.map(x => `<tr><td>${x.pos}</td><td>${x.name}</td><td class="n">${x.qty}</td></tr>`).join('')}</table>
+        <p><b>Масса конструкции ≈ ${Math.round(cl.totalKg)} кг</b> (каркас и листы, без фурнитуры и без добавки на сварные швы). Каждая секция ≈ ${Math.round(cl.totalKg / P.modules)} кг: для переноса нужны 3–4 человека или тележка.</p>
+      </div>
+      <div>
+        <h3>Технические требования</h3>
+        <ol>
+          <li>Сталь Ст3, уголок по ГОСТ 8509-93, лист холоднокатаный/горячекатаный по ГОСТ 19903 / 16523, толщина ${P.sheetT} мм.</li>
+          <li>Каркас: сварка полуавтоматом в среде защитного газа (ГОСТ 14771), катет шва 3 мм, шов прерывистый 30/100, на стыках стоек и поясов. Швы зачистить, острые кромки притупить.</li>
+          <li>Листовые панели (поз. 5, 6, 7) крепятся к каркасу прихватками или заклёпками (шаг ≈ 150 мм), двери навешиваются на накладных усиленных петлях (3 шт. на дверь).</li>
+          <li>Допуски: неуказанные предельные отклонения линейных размеров по ГОСТ 30893.1 (класс «средний», mK); диагонали фасада секции равны с отклонением не более 3 мм; перекос стойки не более 2 мм на высоте 1800.</li>
+          <li>Секции собирать на стенде вместе (контрольная сборка 6 м), отверстия под стяжные болты сверлить по месту, секции маркировать 1–3 слева направо.</li>
+          <li>Окраска: порошковая или эмаль по металлу, цвет по согласованию (ориентир RAL 7035 или 7040). Перед окраской обезжирить и зачистить.</li>
+          <li>Установка: на ровное основание, регулировка опорами М10 (±10 мм), по желанию заказчика крепить к стене анкером за заднюю стойку.</li>
+          <li>Двери: открываются на 110°, перед фасадом свободная зона не менее 500 мм. Замки с ключами, не менее 2 ключей на замок.</li>
+        </ol>
+        <div class="warn"><b>Нужно уточнить у заказчика (допущения этого чертежа):</b>
+          <ol>
+            <li>«С ящиками»: в задании указаны только ячейки с дверцами. Выдвижных ящиков здесь нет. Если нужны, в какие ячейки и на какую нагрузку.</li>
+            <li>Размеры «0,5 × 0,9» приняты как шаг ячейки по фасаду (свет между стойками 432–455 мм, высота ряда 900 по осям поясов).</li>
+            <li>Толщина листа 1,5 мм и уголок 45×45×4 приняты как рабочие. Мастер вправе заменить на 45×45×3 / лист 1,2–2 мм в рамках своего расчёта.</li>
+            <li>Внутри ячеек полок нет. Добавить полки или перфорацию под крючки: решить заранее.</li>
+            <li>Допустимая нагрузка на ячейку не рассчитывалась: подтверждается мастером по его технологии.</li>
+          </ol></div>
+      </div>
+    </div>
+  </div>
+  <svg viewBox="0 0 420 297" xmlns="${NS}" style="position:absolute;inset:0;width:420mm;height:297mm;pointer-events:none">${(() => { const s = new S(); titleBlock(s, { title: 'Спецификация', sheetNo: '3', scale: '—', sub: 'Ведомость деталей, технические требования, допущения' }); return s.html(); })()}</svg>`;
+  const el = document.createElement('div'); el.className = 'sheet doc'; el.innerHTML = html; sheets.appendChild(el);
+})();
+document.getElementById('status').textContent = 'A3 · 3 листа · из model.js';
+</script>
+</body>
+</html>
